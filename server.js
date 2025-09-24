@@ -16,6 +16,12 @@ const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const s3 = new S3Client({ region: "ap-southeast-2" });
 const BUCKET = process.env.S3_BUCKET || "my-pdf-storage-sydney";
 
+const { CognitoIdentityProviderClient, SignUpCommand, ConfirmSignUpCommand, InitiateAuthCommand } = require("@aws-sdk/client-cognito-identity-provider");
+const { CognitoJwtVerifier } = require("aws-jwt-verify");
+
+const cognito = new CognitoIdentityProviderClient({ region: "ap-southeast-2" });
+
+
 const app = express();
 app.use(cors());
 app.use(morgan("dev"));
@@ -218,19 +224,58 @@ const USERS = [
   { username: "Max", password: "Max123", role: "user" }
 ];
 
-// Login endpoint
-app.post("/login", (req, res) => {
-  const { username, password } = req.body;
-  const found = USERS.find(u => u.username === username && u.password === password);
-  if (!found) return res.status(401).json({ error: "Invalid username or password" });
-
-  const token = jwt.sign(
-    { username: found.username, role: found.role },
-    SECRET,
-    { expiresIn: "1h" }
-  );
-  res.json({ token });
+// Cognito signup
+app.post("/auth/signup", async (req, res) => {
+  const { username, password, email } = req.body;
+  try {
+    const cmd = new SignUpCommand({
+      ClientId: process.env.COGNITO_CLIENT_ID,
+      Username: username,
+      Password: password,
+      UserAttributes: [{ Name: "email", Value: email }],
+    });
+    await cognito.send(cmd);
+    res.json({ message: "Signup successful, check your email for the confirmation code" });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
+
+// Cognito confirm
+app.post("/auth/confirm", async (req, res) => {
+  const { username, code } = req.body;
+  try {
+    const cmd = new ConfirmSignUpCommand({
+      ClientId: process.env.COGNITO_CLIENT_ID,
+      Username: username,
+      ConfirmationCode: code,
+    });
+    await cognito.send(cmd);
+    res.json({ message: "User confirmed successfully" });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Cognito login
+app.post("/auth/login", async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const cmd = new InitiateAuthCommand({
+      AuthFlow: "USER_PASSWORD_AUTH",
+      ClientId: process.env.COGNITO_CLIENT_ID,
+      AuthParameters: { USERNAME: username, PASSWORD: password },
+    });
+    const out = await cognito.send(cmd);
+    res.json({
+      idToken: out.AuthenticationResult.IdToken,
+      accessToken: out.AuthenticationResult.AccessToken,
+    });
+  } catch (err) {
+    res.status(401).json({ error: "Login failed: " + err.message });
+  }
+});
+
 
 // Web client server
 app.use(express.static(path.join(__dirname, "public")));

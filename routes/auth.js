@@ -1,16 +1,22 @@
-const jwt = require("jsonwebtoken");
-const SECRET = process.env.JWT_SECRET || "dev-secret";
+// routes/auth.js
+const { CognitoJwtVerifier } = require("aws-jwt-verify");
 
-function requireAuth(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  if (!authHeader) return res.status(401).json({ error: "Missing Authorization header" });
+const verifier = CognitoJwtVerifier.create({
+  userPoolId: process.env.COGNITO_USER_POOL_ID,
+  clientId: process.env.COGNITO_CLIENT_ID,
+  tokenUse: "id",
+});
 
-  const token = authHeader.split(" ")[1]; // "Bearer <token>"
-  jwt.verify(token, SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: "Invalid or expired token" });
-    req.user = user;
+async function requireAuth(req, res, next) {
+  try {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) throw new Error("Missing token");
+    const payload = await verifier.verify(token);
+    req.user = payload;
     next();
-  });
+  } catch (err) {
+    res.status(401).json({ error: "Unauthorized: " + err.message });
+  }
 }
 
 module.exports = { requireAuth };
