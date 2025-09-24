@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const jwt = require("jsonwebtoken");
 const SECRET = process.env.JWT_SECRET || "dev-secret";
 const express = require("express");
@@ -21,6 +23,14 @@ const { CognitoJwtVerifier } = require("aws-jwt-verify");
 
 const cognito = new CognitoIdentityProviderClient({ region: "ap-southeast-2" });
 
+const crypto = require("crypto");
+
+function hashSecret(username) {
+  return crypto
+    .createHmac("SHA256", process.env.COGNITO_CLIENT_SECRET)
+    .update(username + process.env.COGNITO_CLIENT_ID)
+    .digest("base64");
+}
 
 const app = express();
 app.use(cors());
@@ -233,6 +243,7 @@ app.post("/auth/signup", async (req, res) => {
       Username: username,
       Password: password,
       UserAttributes: [{ Name: "email", Value: email }],
+      SecretHash: hashSecret(username),
     });
     await cognito.send(cmd);
     res.json({ message: "Signup successful, check your email for the confirmation code" });
@@ -249,6 +260,7 @@ app.post("/auth/confirm", async (req, res) => {
       ClientId: process.env.COGNITO_CLIENT_ID,
       Username: username,
       ConfirmationCode: code,
+      SecretHash: hashSecret(username),
     });
     await cognito.send(cmd);
     res.json({ message: "User confirmed successfully" });
@@ -264,7 +276,7 @@ app.post("/auth/login", async (req, res) => {
     const cmd = new InitiateAuthCommand({
       AuthFlow: "USER_PASSWORD_AUTH",
       ClientId: process.env.COGNITO_CLIENT_ID,
-      AuthParameters: { USERNAME: username, PASSWORD: password },
+      AuthParameters: { USERNAME: username, PASSWORD: password, SECRET_HASH: hashSecret(username),},
     });
     const out = await cognito.send(cmd);
     res.json({
