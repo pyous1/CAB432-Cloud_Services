@@ -7,7 +7,6 @@ const multer = require("multer");
 const { exec } = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const { router: historyRouter, addHistory } = require("./routes/history");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 const axios = require("axios");
 
@@ -84,7 +83,7 @@ async function requireAuth(req, res, next) {
     const payload = await verifier.verify(token);
     req.user = payload; // contains username, sub, etc.
     next();
-  } catch (err) {
+  } catch (err) { 
     return res.status(403).json({ error: "Invalid or expired token" });
   }
 }
