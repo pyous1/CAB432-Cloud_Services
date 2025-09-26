@@ -8,7 +8,6 @@ const { exec } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const { router: historyRouter, addHistory } = require("./routes/history");
-const { requireAuth } = require("./routes/auth");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 const axios = require("axios");
 
