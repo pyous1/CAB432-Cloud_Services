@@ -19,6 +19,9 @@ const { SSMClient, GetParameterCommand } = require("@aws-sdk/client-ssm");
 const { SecretsManagerClient, GetSecretValueCommand } = require("@aws-sdk/client-secrets-manager");
 const { CognitoIdentityProviderClient, SignUpCommand, ConfirmSignUpCommand, InitiateAuthCommand } = require("@aws-sdk/client-cognito-identity-provider");
 const { RespondToAuthChallengeCommand } = require("@aws-sdk/client-cognito-identity-provider");
+const secretsClient = new SecretsManagerClient({ region: "ap-southeast-2" });
+const secretName = "n11621516-a2secret";
+
 
 // AWS Clients 
 const s3 = new S3Client({ region: "ap-southeast-2" });
