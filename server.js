@@ -1,6 +1,5 @@
-// Imports
-const jwt = require("jsonwebtoken");
-const SECRET = process.env.JWT_SECRET || "dev-secret";
+require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
@@ -8,16 +7,43 @@ const multer = require("multer");
 const { exec } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const { router: historyRouter, addHistory } = require("./routes/history");
+const { requireAuth } = require("./routes/auth");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 const axios = require("axios");
+
+
+// AWS
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const { DynamoDBDocumentClient, PutCommand, QueryCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
 const { SSMClient, GetParameterCommand } = require("@aws-sdk/client-ssm");
+const { SecretsManagerClient, GetSecretValueCommand } = require("@aws-sdk/client-secrets-manager");
+const { CognitoIdentityProviderClient, SignUpCommand, ConfirmSignUpCommand, InitiateAuthCommand } = require("@aws-sdk/client-cognito-identity-provider");
+const { RespondToAuthChallengeCommand } = require("@aws-sdk/client-cognito-identity-provider");
 
 // AWS Clients 
 const s3 = new S3Client({ region: "ap-southeast-2" });
 const BUCKET = process.env.S3_BUCKET || "my-pdf-storage-sydney";
+
+const { CognitoJwtVerifier } = require("aws-jwt-verify");
+const verifier = CognitoJwtVerifier.create({
+  userPoolId: process.env.COGNITO_USER_POOL_ID,
+  tokenUse: process.env.COGNITO_CLIENT_ID,
+  clientId: process.env.COGNITO_CLIENT_ID,
+});
+
+
+const cognito = new CognitoIdentityProviderClient({ region: "ap-southeast-2" });
+
+const crypto = require("crypto");
+
+function hashSecret(username) {
+  return crypto
+    .createHmac("SHA256", process.env.COGNITO_CLIENT_SECRET)
+    .update(username + process.env.COGNITO_CLIENT_ID)
+    .digest("base64");
+}
 const ssm = new SSMClient({ region: "ap-southeast-2" });
 
 const ddb = DynamoDBDocumentClient.from(
@@ -31,60 +57,223 @@ app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json({ limit: "10mb" }));
 
+// confirm
+const { AssociateSoftwareTokenCommand } = require("@aws-sdk/client-cognito-identity-provider");
+const QRCode = require("qrcode");
+
+// verify
+const { VerifySoftwareTokenCommand } = require("@aws-sdk/client-cognito-identity-provider");
+
+// MFA user
+const { SetUserMFAPreferenceCommand } = require("@aws-sdk/client-cognito-identity-provider");
+
 // File Upload config
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 }
 });
 
-// Auth middleware 
-function requireAuth(req, res, next) {
+// ------------------- AUTHENTICATION ----------------------------
+
+// Auth middleware
+async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).json({ error: "No token provided" });
 
   const token = authHeader.split(" ")[1];
-  jwt.verify(token, SECRET, (err, decoded) => {
-    if (err) return res.status(403).json({ error: "Invalid token" });
-    req.user = decoded; // { username, role }
+  try {
+    const payload = await verifier.verify(token);
+    req.user = payload; // contains username, sub, etc.
     next();
-  });
+  } catch (err) {
+    return res.status(403).json({ error: "Invalid or expired token" });
+  }
 }
 
 // Role checker
 function requireRole(role) {
   return (req, res, next) => {
-    if (!req.user || req.user.role !== role) {
-      return res.status(403).json({ error: "Forbidden: Admins only" });
+    if (!req.user || req.user["cognito:groups"]?.[0] !== role) {
+      return res.status(403).json({ error: "Forbidden: " + role + " only" });
     }
     next();
   };
 }
 
+// Cognito signup
+app.post("/auth/signup", async (req, res) => {
+  const { username, password, email, fullName } = req.body;
+  try {
+    const cmd = new SignUpCommand({
+      ClientId: process.env.COGNITO_CLIENT_ID,
+      Username: username,
+      Password: password,
+      UserAttributes: [
+        { Name: "email", Value: email },
+        { Name: "name", Value: fullName || username }  // required full name
+      ],
+      SecretHash: hashSecret(username),
+    });
+
+    await cognito.send(cmd);
+    res.json({ message: "Signup successful, check your email for the confirmation code" });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Cognito confirm
+app.post("/auth/confirm", async (req, res) => {
+  const { username, code } = req.body;
+  try {
+    const cmd = new ConfirmSignUpCommand({
+      ClientId: process.env.COGNITO_CLIENT_ID,
+      Username: username,
+      ConfirmationCode: code,
+      SecretHash: hashSecret(username),
+    });
+    await cognito.send(cmd);
+    res.json({ message: "User confirmed successfully" });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Cognito login
+app.post("/auth/login", async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const cmd = new InitiateAuthCommand({
+      AuthFlow: "USER_PASSWORD_AUTH",
+      ClientId: process.env.COGNITO_CLIENT_ID,
+      AuthParameters: {
+        USERNAME: username,
+        PASSWORD: password,
+        SECRET_HASH: hashSecret(username),
+      },
+    });
+    const out = await cognito.send(cmd);
+    if (out.ChallengeName === "SMS_MFA" || out.ChallengeName === "SOFTWARE_TOKEN_MFA") {
+      return res.json({
+        challenge: out.ChallengeName,
+        session: out.Session,
+      });
+    }
+
+    // Normal login
+    res.json({
+      idToken: out.AuthenticationResult.IdToken,
+      accessToken: out.AuthenticationResult.AccessToken,
+    });
+  } catch (err) {
+    res.status(401).json({ error: "Login failed: " + err.message });
+  }
+});
+
+// Setup OTP
+app.post("/auth/setup-totp", async (req, res) => {
+  const { accessToken, username } = req.body; // need username for display
+  try {
+    const cmd = new AssociateSoftwareTokenCommand({ AccessToken: accessToken });
+    const out = await cognito.send(cmd);
+
+    const secret = out.SecretCode;
+
+    // Build otpauth:// URI
+    const issuer = "PDFConverter"; // your app name
+    const uri = `otpauth://totp/${issuer}:${username}?secret=${secret}&issuer=${issuer}`;
+
+    // Generate QR code as Data URL
+    const qrCodeDataURL = await QRCode.toDataURL(uri);
+
+    res.json({
+      secret,
+      uri,
+      qrCode: qrCodeDataURL // can be displayed in browser or decoded by Hoppscotch
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Verify OTP
+app.post("/auth/verify-totp", async (req, res) => {
+  const { accessToken, code } = req.body; // code = 6-digit from authenticator app
+  try {
+    const cmd = new VerifySoftwareTokenCommand({
+      AccessToken: accessToken,
+      UserCode: code,
+    });
+    const out = await cognito.send(cmd);
+    res.json({ status: out.Status }); // "SUCCESS" if correct
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// MFA 
+app.post("/auth/mfa", async (req, res) => {
+  const { username, session, code } = req.body;
+  try {
+    const cmd = new RespondToAuthChallengeCommand({
+      ClientId: process.env.COGNITO_CLIENT_ID,
+      ChallengeName: "SOFTWARE_TOKEN_MFA",
+      Session: session,
+      ChallengeResponses: {
+        USERNAME: username,
+        SOFTWARE_TOKEN_MFA_CODE: code,
+        SECRET_HASH: hashSecret(username),
+      },
+    });
+
+    const out = await cognito.send(cmd);
+    res.json({
+      idToken: out.AuthenticationResult.IdToken,
+      accessToken: out.AuthenticationResult.AccessToken,
+    });
+  } catch (err) {
+    res.status(400).json({ error: "MFA failed: " + err.message });
+  }
+});
+
+// Set MFA preference
+app.post("/auth/set-mfa", async (req, res) => {
+  const { accessToken } = req.body;
+  try {
+    const cmd = new SetUserMFAPreferenceCommand({
+      AccessToken: accessToken,
+      SoftwareTokenMfaSettings: {
+        Enabled: true,
+        PreferredMfa: true,
+      },
+    });
+    await cognito.send(cmd);
+    res.json({ message: "MFA set to TOTP for this user" });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// -------------------- CORE ROUTES ------------------------
+
 // Health check 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// History helpers
+// History logging
 async function addHistory(username, action, details) {
   await ddb.send(
     new PutCommand({
       TableName: HISTORY_TABLE,
-      Item: {
-        username,                               // partition key
-        timestamp: Date.now(),      // sort key
-        action,
-        details,
-        created_at: new Date().toISOString()
-      }
+      Item: { username, timestamp: Date.now(), action, details, created_at: new Date().toISOString() },
     })
   );
 }
 
-// GET history (admin sees all, users see their own)
+// Get history
 app.get("/history", requireAuth, async (req, res) => {
   try {
     let items = [];
-
-    if (req.user.role === "admin") {
+    if (req.user["cognito:groups"]?.includes("admin")) {
       const data = await ddb.send(new ScanCommand({ TableName: HISTORY_TABLE }));
       items = data.Items || [];
     } else {
@@ -92,32 +281,25 @@ app.get("/history", requireAuth, async (req, res) => {
         new QueryCommand({
           TableName: HISTORY_TABLE,
           KeyConditionExpression: "username = :u",
-          ExpressionAttributeValues: { ":u": req.user.username }
+          ExpressionAttributeValues: { ":u": req.user.username },
         })
       );
       items = data.Items || [];
     }
-
     items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     res.json({ results: items });
   } catch (err) {
-    console.error("History fetch error:", err);
     res.status(500).json({ error: "Failed to fetch history" });
   }
 });
 
-// S3 Helper
+// S3 upload helper
 async function uploadToS3(buffer, key, contentType = "application/pdf") {
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      Body: buffer,
-      ContentType: contentType
-    })
-  );
+  await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buffer, ContentType: contentType }));
   return `https://${BUCKET}.s3.ap-southeast-2.amazonaws.com/${key}`;
 }
+
+//  ------------------------ PDF ROUTES -----------------
 
 // Convert images into PDF
 app.post("/convert/images", requireAuth, upload.array("files", 50), async (req, res) => {
@@ -288,46 +470,16 @@ app.get("/external/fetchpdf", requireAuth, async (req, res) => {
   }
 });
 
-// Local USERS + Login
-const USERS = [
-  { username: "admin", password: "admin123", role: "admin" },
-  { username: "Grace", password: "Grace123", role: "user" },
-  { username: "Max", password: "Max123", role: "user" }
-];
+//------------- BOOTSRAP ----------------
 
-app.post("/login", (req, res) => {
-  const { username, password } = req.body;
-  const found = USERS.find(
-    (u) => u.username === username && u.password === password
-  );
-  if (!found) return res.status(401).json({ error: "Invalid username or password" });
-
-  const token = jwt.sign(
-    { username: found.username, role: found.role },
-    SECRET,
-    { expiresIn: "1h" }
-  );
-  res.json({ token });
-});
-
-// secrets manager 
-const { SecretsManagerClient, GetSecretValueCommand } = require("@aws-sdk/client-secrets-manager");
-
-const secretName = "n11621516-a2secret";  // use your actual secret name
-const secretsClient = new SecretsManagerClient({ region: "ap-southeast-2" });
-
+// Secrets Manager
 async function loadSecrets() {
   try {
-    const response = await secretsClient.send(
-      new GetSecretValueCommand({ SecretId: secretName })
-    );
-
+    const response = await secretsClient.send(new GetSecretValueCommand({ SecretId: secretName }));
     if (response.SecretString) {
       const secret = JSON.parse(response.SecretString);
-
       if (secret.JWT_SECRET) process.env.JWT_SECRET = secret.JWT_SECRET;
       if (secret.DB_PASSWORD) process.env.DB_PASSWORD = secret.DB_PASSWORD;
-
       console.log("Secrets loaded from Secrets Manager ✅");
     }
   } catch (err) {
@@ -335,15 +487,10 @@ async function loadSecrets() {
   }
 }
 
-// paramter manager 
+// Parameter Store
 async function loadParameters() {
   try {
-    const param = await ssm.send(
-      new GetParameterCommand({
-        Name: "/n11621516/pdf_parameter"
-      })
-    );
-
+    const param = await ssm.send(new GetParameterCommand({ Name: "/n11621516/pdf_parameter" }));
     process.env.APP_URL = param.Parameter.Value;
     console.log("Parameter loaded from SSM ✅", process.env.APP_URL);
   } catch (err) {
@@ -351,20 +498,12 @@ async function loadParameters() {
   }
 }
 
-
-// static files
 app.use(express.static(path.join(__dirname, "public")));
 
-// Start server 
 const PORT = process.env.PORT || 3000;
-
 async function init() {
-  await loadSecrets();     // Secrets Manager (JWT_SECRET etc.)
-  await loadParameters();  // Parameter Store (app URL etc.)
-
-  app.listen(PORT, () =>
-    console.log(`PDF converter running on port ${PORT}`)
-  );
+  await loadSecrets();
+  await loadParameters();
+  app.listen(PORT, () => console.log(`PDF converter running on port ${PORT}`));
 }
-
 init();
