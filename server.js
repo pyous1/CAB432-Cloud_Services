@@ -21,6 +21,8 @@ const BUCKET = process.env.S3_BUCKET || "my-pdf-storage-sydney";
 const { CognitoIdentityProviderClient, SignUpCommand, ConfirmSignUpCommand, InitiateAuthCommand } = require("@aws-sdk/client-cognito-identity-provider");
 const { CognitoJwtVerifier } = require("aws-jwt-verify");
 
+const { RespondToAuthChallengeCommand } = require("@aws-sdk/client-cognito-identity-provider");
+
 const cognito = new CognitoIdentityProviderClient({ region: "ap-southeast-2" });
 
 const crypto = require("crypto");
@@ -36,6 +38,99 @@ const app = express();
 app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json({ limit: "10mb" }));
+
+// confirm
+const { AssociateSoftwareTokenCommand } = require("@aws-sdk/client-cognito-identity-provider");
+const QRCode = require("qrcode");
+
+app.post("/auth/setup-totp", async (req, res) => {
+  const { accessToken, username } = req.body; // need username for display
+  try {
+    const cmd = new AssociateSoftwareTokenCommand({ AccessToken: accessToken });
+    const out = await cognito.send(cmd);
+
+    const secret = out.SecretCode;
+
+    // Build otpauth:// URI
+    const issuer = "PDFConverter"; // your app name
+    const uri = `otpauth://totp/${issuer}:${username}?secret=${secret}&issuer=${issuer}`;
+
+    // Generate QR code as Data URL
+    const qrCodeDataURL = await QRCode.toDataURL(uri);
+
+    res.json({
+      secret,
+      uri,
+      qrCode: qrCodeDataURL // can be displayed in browser or decoded by Hoppscotch
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+
+// verify
+const { VerifySoftwareTokenCommand } = require("@aws-sdk/client-cognito-identity-provider");
+
+// Endpoint: /auth/verify-totp
+app.post("/auth/verify-totp", async (req, res) => {
+  const { accessToken, code } = req.body; // code = 6-digit from authenticator app
+  try {
+    const cmd = new VerifySoftwareTokenCommand({
+      AccessToken: accessToken,
+      UserCode: code,
+    });
+    const out = await cognito.send(cmd);
+    res.json({ status: out.Status }); // "SUCCESS" if correct
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// MFA 
+app.post("/auth/mfa", async (req, res) => {
+  const { username, session, code } = req.body;
+  try {
+    const cmd = new RespondToAuthChallengeCommand({
+      ClientId: process.env.COGNITO_CLIENT_ID,
+      ChallengeName: "SOFTWARE_TOKEN_MFA",
+      Session: session,
+      ChallengeResponses: {
+        USERNAME: username,
+        SOFTWARE_TOKEN_MFA_CODE: code,
+        SECRET_HASH: hashSecret(username),
+      },
+    });
+
+    const out = await cognito.send(cmd);
+    res.json({
+      idToken: out.AuthenticationResult.IdToken,
+      accessToken: out.AuthenticationResult.AccessToken,
+    });
+  } catch (err) {
+    res.status(400).json({ error: "MFA failed: " + err.message });
+  }
+});
+
+// MFA user
+const { SetUserMFAPreferenceCommand } = require("@aws-sdk/client-cognito-identity-provider");
+
+app.post("/auth/set-mfa", async (req, res) => {
+  const { accessToken } = req.body;
+  try {
+    const cmd = new SetUserMFAPreferenceCommand({
+      AccessToken: accessToken,
+      SoftwareTokenMfaSettings: {
+        Enabled: true,
+        PreferredMfa: true,
+      },
+    });
+    await cognito.send(cmd);
+    res.json({ message: "MFA set to TOTP for this user" });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
 
 // Upload config 
 const upload = multer({
@@ -236,21 +331,27 @@ const USERS = [
 
 // Cognito signup
 app.post("/auth/signup", async (req, res) => {
-  const { username, password, email } = req.body;
+  const { username, password, email, fullName } = req.body;
+
   try {
     const cmd = new SignUpCommand({
       ClientId: process.env.COGNITO_CLIENT_ID,
       Username: username,
       Password: password,
-      UserAttributes: [{ Name: "email", Value: email }],
+      UserAttributes: [
+        { Name: "email", Value: email },
+        { Name: "name", Value: fullName || username }  // required full name
+      ],
       SecretHash: hashSecret(username),
     });
+
     await cognito.send(cmd);
     res.json({ message: "Signup successful, check your email for the confirmation code" });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
+
 
 // Cognito confirm
 app.post("/auth/confirm", async (req, res) => {
@@ -276,9 +377,24 @@ app.post("/auth/login", async (req, res) => {
     const cmd = new InitiateAuthCommand({
       AuthFlow: "USER_PASSWORD_AUTH",
       ClientId: process.env.COGNITO_CLIENT_ID,
-      AuthParameters: { USERNAME: username, PASSWORD: password, SECRET_HASH: hashSecret(username),},
+      AuthParameters: {
+        USERNAME: username,
+        PASSWORD: password,
+        SECRET_HASH: hashSecret(username),
+      },
     });
+
     const out = await cognito.send(cmd);
+
+    // Handle MFA challenges
+    if (out.ChallengeName === "SMS_MFA" || out.ChallengeName === "SOFTWARE_TOKEN_MFA") {
+      return res.json({
+        challenge: out.ChallengeName,
+        session: out.Session,
+      });
+    }
+
+    // Normal login
     res.json({
       idToken: out.AuthenticationResult.IdToken,
       accessToken: out.AuthenticationResult.AccessToken,
