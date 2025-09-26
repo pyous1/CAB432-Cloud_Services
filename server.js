@@ -1,4 +1,4 @@
-// ---------- Imports ----------
+// Imports
 const jwt = require("jsonwebtoken");
 const SECRET = process.env.JWT_SECRET || "dev-secret";
 const express = require("express");
@@ -13,29 +13,31 @@ const axios = require("axios");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const { DynamoDBDocumentClient, PutCommand, QueryCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
+const { SSMClient, GetParameterCommand } = require("@aws-sdk/client-ssm");
 
-// ---------- AWS Clients ----------
+// AWS Clients 
 const s3 = new S3Client({ region: "ap-southeast-2" });
 const BUCKET = process.env.S3_BUCKET || "my-pdf-storage-sydney";
+const ssm = new SSMClient({ region: "ap-southeast-2" });
 
 const ddb = DynamoDBDocumentClient.from(
   new DynamoDBClient({ region: "ap-southeast-2" })
 );
 const HISTORY_TABLE = process.env.HISTORY_TABLE || "pdf-history";
 
-// ---------- Express setup ----------
+// Express setup 
 const app = express();
 app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json({ limit: "10mb" }));
 
-// ---------- File Upload config ----------
+// File Upload config
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 }
 });
 
-// ---------- Auth middleware ----------
+// Auth middleware 
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).json({ error: "No token provided" });
@@ -58,10 +60,10 @@ function requireRole(role) {
   };
 }
 
-// ---------- Health check ----------
+// Health check 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// ---------- History helpers ----------
+// History helpers
 async function addHistory(username, action, details) {
   await ddb.send(
     new PutCommand({
@@ -104,7 +106,7 @@ app.get("/history", requireAuth, async (req, res) => {
   }
 });
 
-// ---------- S3 Helper ----------
+// S3 Helper
 async function uploadToS3(buffer, key, contentType = "application/pdf") {
   await s3.send(
     new PutObjectCommand({
@@ -117,7 +119,7 @@ async function uploadToS3(buffer, key, contentType = "application/pdf") {
   return `https://${BUCKET}.s3.ap-southeast-2.amazonaws.com/${key}`;
 }
 
-// ---------- Convert images into PDF ----------
+// Convert images into PDF
 app.post("/convert/images", requireAuth, upload.array("files", 50), async (req, res) => {
   await addHistory(req.user.username, "images->pdf", {
     files: req.files.map(f => f.originalname)
@@ -157,7 +159,7 @@ app.post("/convert/images", requireAuth, upload.array("files", 50), async (req, 
   }
 });
 
-// ---------- Merge PDFs ----------
+// Merge PDFs
 app.post("/merge", requireAuth, upload.array("files", 50), async (req, res) => {
   await addHistory(req.user.username, "merge", {
     files: req.files.map(f => f.originalname)
@@ -187,7 +189,7 @@ app.post("/merge", requireAuth, upload.array("files", 50), async (req, res) => {
   }
 });
 
-// ---------- Convert LaTeX into PDF ----------
+// Convert LaTeX into PDF
 app.post("/convert/latex", requireAuth, upload.single("file"), (req, res) => {
   addHistory(req.user.username, "latex->pdf", { file: req.file?.originalname });
 
@@ -218,7 +220,7 @@ app.post("/convert/latex", requireAuth, upload.single("file"), (req, res) => {
   );
 });
 
-// ---------- Watermark ----------
+// Watermark
 async function addWatermarkBuffer(pdfBuffer, text = "WATERMARK", repeat = 100) {
   let pdfDoc;
   for (let i = 0; i < repeat; i++) {
@@ -269,7 +271,7 @@ app.post("/watermark-heavy", requireAuth, upload.array("files", 5), async (req, 
   }
 });
 
-// ---------- External PDF fetch ----------
+// External PDF fetch
 app.get("/external/fetchpdf", requireAuth, async (req, res) => {
   try {
     const pdfUrl =
@@ -286,7 +288,7 @@ app.get("/external/fetchpdf", requireAuth, async (req, res) => {
   }
 });
 
-// ---------- Local USERS + Login ----------
+// Local USERS + Login
 const USERS = [
   { username: "admin", password: "admin123", role: "admin" },
   { username: "Grace", password: "Grace123", role: "user" },
@@ -308,11 +310,61 @@ app.post("/login", (req, res) => {
   res.json({ token });
 });
 
-// ---------- Static files ----------
+// secrets manager 
+const { SecretsManagerClient, GetSecretValueCommand } = require("@aws-sdk/client-secrets-manager");
+
+const secretName = "n11621516-a2secret";  // use your actual secret name
+const secretsClient = new SecretsManagerClient({ region: "ap-southeast-2" });
+
+async function loadSecrets() {
+  try {
+    const response = await secretsClient.send(
+      new GetSecretValueCommand({ SecretId: secretName })
+    );
+
+    if (response.SecretString) {
+      const secret = JSON.parse(response.SecretString);
+
+      if (secret.JWT_SECRET) process.env.JWT_SECRET = secret.JWT_SECRET;
+      if (secret.DB_PASSWORD) process.env.DB_PASSWORD = secret.DB_PASSWORD;
+
+      console.log("Secrets loaded from Secrets Manager ✅");
+    }
+  } catch (err) {
+    console.error("Failed to load secrets:", err);
+  }
+}
+
+// paramter manager 
+async function loadParameters() {
+  try {
+    const param = await ssm.send(
+      new GetParameterCommand({
+        Name: "/n11621516/pdf_parameter"
+      })
+    );
+
+    process.env.APP_URL = param.Parameter.Value;
+    console.log("Parameter loaded from SSM ✅", process.env.APP_URL);
+  } catch (err) {
+    console.error("Failed to load parameter:", err);
+  }
+}
+
+
+// static files
 app.use(express.static(path.join(__dirname, "public")));
 
-// ---------- Start server ----------
+// Start server 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () =>
-  console.log(`PDF converter running on port ${PORT}`)
-);
+
+async function init() {
+  await loadSecrets();     // Secrets Manager (JWT_SECRET etc.)
+  await loadParameters();  // Parameter Store (app URL etc.)
+
+  app.listen(PORT, () =>
+    console.log(`PDF converter running on port ${PORT}`)
+  );
+}
+
+init();

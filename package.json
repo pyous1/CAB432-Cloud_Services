@@ -6,7 +6,11 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.896.0",
     "@aws-sdk/client-s3": "^3.879.0",
+    "@aws-sdk/client-secrets-manager": "^3.896.0",
+    "@aws-sdk/client-ssm": "^3.896.0",
+    "@aws-sdk/lib-dynamodb": "^3.896.0",
     "axios": "^1.11.0",
     "better-sqlite3": "^12.2.0",
     "cors": "^2.8.5",
@@ -22,5 +26,13 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs"
+  "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pyous1/CAB432-Cloud_Services.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pyous1/CAB432-Cloud_Services/issues"
+  },
+  "homepage": "https://github.com/pyous1/CAB432-Cloud_Services#readme"
 }
