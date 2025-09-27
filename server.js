@@ -391,21 +391,6 @@ app.get("/history", requireAuth, async (req, res) => {
   }
 });
 
-// ⬇️ NEW: RDS history endpoint
-app.get("/history/rds/:user", requireAuth, async (req, res) => {
-  try {
-    const result = await pgPool.query(
-      "select * from jobs where user_id = $1 order by created_at desc",
-      [req.user.username]
-    );
-    res.json({ results: result.rows });
-  } catch (err) {
-    console.error("❌ Failed to fetch RDS history:", err.message);
-    res.status(500).json({ error: "Failed to fetch RDS history" });
-  }
-});
-
-
 // ⬇️ NEW: RDS summary endpoint (aggregate query)
 app.get("/history/rds/summary", requireAuth, async (req, res) => {
   try {
@@ -447,6 +432,20 @@ app.get("/history/rds/filter", requireAuth, async (req, res) => {
   } catch (err) {
     console.error("❌ Failed to fetch RDS filtered jobs:", err.message);
     res.status(500).json({ error: "Failed to fetch RDS filtered jobs" });
+  }
+});
+
+// ⬇️ NEW: RDS history endpoint
+app.get("/history/rds/:user", requireAuth, async (req, res) => {
+  try {
+    const result = await pgPool.query(
+      "select * from jobs where user_id = $1 order by created_at desc",
+      [req.user.username]
+    );
+    res.json({ results: result.rows });
+  } catch (err) {
+    console.error("❌ Failed to fetch RDS history:", err.message);
+    res.status(500).json({ error: "Failed to fetch RDS history" });
   }
 });
 
