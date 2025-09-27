@@ -392,11 +392,11 @@ app.get("/history", requireAuth, async (req, res) => {
 });
 
 // ⬇️ NEW: RDS history endpoint
-app.get("/history/rds/:user", requireAuth, async (req, res) => {
+app.get("/history/rds", requireAuth, async (req, res) => {
   try {
     const result = await pgPool.query(
       "select * from jobs where user_id = $1 order by created_at desc",
-      [req.params.user]
+      [req.user.username]
     );
     res.json({ results: result.rows });
   } catch (err) {
@@ -404,6 +404,7 @@ app.get("/history/rds/:user", requireAuth, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch RDS history" });
   }
 });
+
 
 // ⬇️ NEW: RDS summary endpoint (aggregate query)
 app.get("/history/rds/summary", requireAuth, async (req, res) => {
@@ -527,7 +528,7 @@ app.post("/convert/images", requireAuth, upload.array("files", 50), async (req, 
     const key = `images/${Date.now()}-images.pdf`;
     const url = await uploadToS3(Buffer.from(pdfBytes), key);
   
-    await saveJob(req.user.username, "images.pdf", "images->pdf", "success");
+    await saveJob(req.user.username, key, "images->pdf", "success");
 
     res.json({ message: "PDF uploaded to S3", url });
   } catch (err) {
