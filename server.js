@@ -430,10 +430,8 @@ app.get("/history/rds/filter", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "Please provide ?action=..." });
   }
 
-  // Debug log to see what Hoppscotch actually sends
   console.log("🔎 Raw action param:", JSON.stringify(action));
 
-  // Normalise: trim spaces + strip quotes + force lowercase
   action = action.trim().replace(/^"+|"+$/g, "").toLowerCase();
 
   try {
@@ -441,6 +439,9 @@ app.get("/history/rds/filter", requireAuth, async (req, res) => {
       "SELECT * FROM jobs WHERE LOWER(action) = $1 ORDER BY created_at DESC",
       [action]
     );
+
+    console.log("✅ Query executed with param:", action);
+    console.log("✅ Rows returned:", result.rows.length);
 
     res.json({ results: result.rows });
   } catch (err) {
