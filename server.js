@@ -392,7 +392,7 @@ app.get("/history", requireAuth, async (req, res) => {
 });
 
 // ⬇️ NEW: RDS history endpoint
-app.get("/history/rds", requireAuth, async (req, res) => {
+app.get("/history/rds/:user", requireAuth, async (req, res) => {
   try {
     const result = await pgPool.query(
       "select * from jobs where user_id = $1 order by created_at desc",
