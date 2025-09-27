@@ -405,6 +405,43 @@ app.get("/history/rds/:user", requireAuth, async (req, res) => {
   }
 });
 
+// ⬇️ NEW: RDS summary endpoint (aggregate query)
+app.get("/history/rds/summary", requireAuth, async (req, res) => {
+  try {
+    const result = await pgPool.query(`
+      SELECT user_id, COUNT(*) AS total_jobs
+      FROM jobs
+      GROUP BY user_id
+      ORDER BY total_jobs DESC;
+    `);
+
+    res.json({ summary: result.rows });
+  } catch (err) {
+    console.error("❌ Failed to fetch RDS summary:", err.message);
+    res.status(500).json({ error: "Failed to fetch RDS summary" });
+  }
+});
+
+// ⬇️ NEW: RDS filter-by-action endpoint
+app.get("/history/rds/filter", requireAuth, async (req, res) => {
+  const { action } = req.query;
+  if (!action) {
+    return res.status(400).json({ error: "Please provide ?action=..." });
+  }
+
+  try {
+    const result = await pgPool.query(
+      "SELECT * FROM jobs WHERE action = $1 ORDER BY created_at DESC",
+      [action]
+    );
+
+    res.json({ results: result.rows });
+  } catch (err) {
+    console.error("❌ Failed to fetch RDS filtered jobs:", err.message);
+    res.status(500).json({ error: "Failed to fetch RDS filtered jobs" });
+  }
+});
+
 // S3 upload helper
 const { GetObjectCommand } = require("@aws-sdk/client-s3");
 
@@ -490,7 +527,7 @@ app.post("/convert/images", requireAuth, upload.array("files", 50), async (req, 
     const key = `images/${Date.now()}-images.pdf`;
     const url = await uploadToS3(Buffer.from(pdfBytes), key);
   
-    await saveJob(req.user.username, "uploaded.pdf", "merge", "success");
+    await saveJob(req.user.username, "images.pdf", "images->pdf", "success");
 
     res.json({ message: "PDF uploaded to S3", url });
   } catch (err) {
@@ -522,7 +559,7 @@ app.post("/merge", requireAuth, upload.array("files", 50), async (req, res) => {
     const key = `merge/${Date.now()}-merged.pdf`;
     const url = await uploadToS3(Buffer.from(pdfBytes), key);
 
-    await saveJob(req.user.username, "uploaded.pdf", "merge", "success");
+    await saveJob(req.user.username, key, "merge", "success");
 
     res.json({ message: "Merged PDF uploaded to S3", url });
   } catch (err) {
@@ -554,7 +591,7 @@ app.post("/convert/latex", requireAuth, upload.single("file"), (req, res) => {
       const key = `latex/${Date.now()}-latex.pdf`;
       const url = await uploadToS3(buffer, key);
 
-      await saveJob(req.user.username, "uploaded.pdf", "merge", "success");
+      await saveJob(req.user.username, req.file.originalname, "latex->pdf", "success");
 
       res.json({ message: "LaTeX PDF uploaded to S3", url });
 
@@ -605,7 +642,7 @@ app.post("/watermark-heavy", requireAuth, upload.array("files", 5), async (req, 
     const key = `watermark-heavy/${Date.now()}-heavy.pdf`;
     const url = await uploadToS3(processed[0], key);
 
-    await saveJob(req.user.username, "uploaded.pdf", "merge", "success");
+    await saveJob(req.user.username, key, "watermark-heavy", "success");
 
     res.json({ message: "Heavy watermark PDF uploaded to S3", url });
   } catch (err) {
@@ -626,6 +663,8 @@ app.get("/external/fetchpdf", requireAuth, async (req, res) => {
 
     const key = `external/${Date.now()}-external.pdf`;
     const url = await uploadToS3(Buffer.from(response.data), key);
+
+    await saveJob(req.user.username, key, "external-fetch", "success");
 
     res.json({ message: "External PDF uploaded to S3", url });
   } catch (err) {
