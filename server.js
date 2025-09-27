@@ -423,16 +423,22 @@ app.get("/history/rds/summary", requireAuth, async (req, res) => {
   }
 });
 
-// ⬇️ NEW: RDS filter-by-action endpoint
+// ⬇️ RDS filter-by-action endpoint (normalised + debug logging)
 app.get("/history/rds/filter", requireAuth, async (req, res) => {
-  const { action } = req.query;
+  let { action } = req.query;
   if (!action) {
     return res.status(400).json({ error: "Please provide ?action=..." });
   }
 
+  // Debug log to see what Hoppscotch actually sends
+  console.log("🔎 Raw action param:", JSON.stringify(action));
+
+  // Normalise: trim spaces + strip quotes + force lowercase
+  action = action.trim().replace(/^"+|"+$/g, "").toLowerCase();
+
   try {
     const result = await pgPool.query(
-      "SELECT * FROM jobs WHERE action = $1 ORDER BY created_at DESC",
+      "SELECT * FROM jobs WHERE LOWER(action) = $1 ORDER BY created_at DESC",
       [action]
     );
 
@@ -442,6 +448,7 @@ app.get("/history/rds/filter", requireAuth, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch RDS filtered jobs" });
   }
 });
+
 
 // S3 upload helper
 const { GetObjectCommand } = require("@aws-sdk/client-s3");
