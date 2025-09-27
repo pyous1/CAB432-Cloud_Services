@@ -335,20 +335,24 @@ async function getOrCache(key, fetchFn) {
 
 // History logging (DynamoDB)
 async function addHistory(username, action, details) {
-  console.log("Adding history for user:", username); // 👈 debug
-  await ddb.send(
-    new PutCommand({
-      TableName: HISTORY_TABLE,
-      Item: {
-        username,
-        timestamp: Date.now(),
-        action,
-        details,
-        created_at: new Date().toISOString(),
-      },
-    })
-  );
+  try {
+    await ddb.send(
+      new PutCommand({
+        TableName: HISTORY_TABLE,
+        Item: {
+          username,
+          timestamp: Date.now(),
+          action,
+          details,
+          created_at: new Date().toISOString(),
+        },
+      })
+    );
+  } catch (err) {
+    console.error("⚠️ Failed to write to DynamoDB:", err.message);
+  }
 }
+
 
 // ⬇️ NEW: History logging for RDS
 async function saveJob(userId, filename, action, status) {
