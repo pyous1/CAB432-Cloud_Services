@@ -27,6 +27,15 @@ const cache = memjs.Client.create(
   process.env.CACHE_ENDPOINT || "pdfconverter.km2jzi.cfg.apse2.cache.amazonaws.com:11211"
 );
 
+const { Pool } = require("pg");
+const pgPool = new Pool({
+  host: "database-1-instance-1.ce2haupt2cta.ap-southeast-2.rds.amazonaws.com",
+  port: 5432,
+  database: "cohort_2025",
+  user: process.env.DB_USER,      // set in .env or Parameter Store
+  password: process.env.DB_PASS,  // set in .env or Parameter Store
+  ssl: { rejectUnauthorized: false }
+});
 
 // AWS Clients 
 const s3 = new S3Client({
@@ -324,7 +333,7 @@ async function getOrCache(key, fetchFn) {
   return fresh;
 }
 
-// History logging
+// History logging (DynamoDB)
 async function addHistory(username, action, details) {
   console.log("Adding history for user:", username); // 👈 debug
   await ddb.send(
@@ -341,7 +350,19 @@ async function addHistory(username, action, details) {
   );
 }
 
-// Get history
+// ⬇️ NEW: History logging for RDS
+async function saveJob(userId, filename, action, status) {
+  try {
+    await pgPool.query(
+      "insert into jobs(user_id, filename, action, status) values ($1, $2, $3, $4)",
+      [userId, filename, action, status]
+    );
+  } catch (err) {
+    console.error("❌ Failed to save job to RDS:", err.message);
+  }
+}
+
+// Get history (DynamoDB)
 app.get("/history", requireAuth, async (req, res) => {
   try {
     const data = await getOrCache(`history:${req.user.username}`, async () => {
@@ -363,6 +384,20 @@ app.get("/history", requireAuth, async (req, res) => {
     res.json({ results: data });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch history" });
+  }
+});
+
+// ⬇️ NEW: RDS history endpoint
+app.get("/history/rds/:user", requireAuth, async (req, res) => {
+  try {
+    const result = await pgPool.query(
+      "select * from jobs where user_id = $1 order by created_at desc",
+      [req.params.user]
+    );
+    res.json({ results: result.rows });
+  } catch (err) {
+    console.error("❌ Failed to fetch RDS history:", err.message);
+    res.status(500).json({ error: "Failed to fetch RDS history" });
   }
 });
 
@@ -450,6 +485,8 @@ app.post("/convert/images", requireAuth, upload.array("files", 50), async (req, 
     const pdfBytes = await pdfDoc.save();
     const key = `images/${Date.now()}-images.pdf`;
     const url = await uploadToS3(Buffer.from(pdfBytes), key);
+  
+    await saveJob(req.user.username, "uploaded.pdf", "merge", "success");
 
     res.json({ message: "PDF uploaded to S3", url });
   } catch (err) {
@@ -481,6 +518,8 @@ app.post("/merge", requireAuth, upload.array("files", 50), async (req, res) => {
     const key = `merge/${Date.now()}-merged.pdf`;
     const url = await uploadToS3(Buffer.from(pdfBytes), key);
 
+    await saveJob(req.user.username, "uploaded.pdf", "merge", "success");
+
     res.json({ message: "Merged PDF uploaded to S3", url });
   } catch (err) {
     console.error(err);
@@ -510,6 +549,8 @@ app.post("/convert/latex", requireAuth, upload.single("file"), (req, res) => {
       const buffer = fs.readFileSync(pdfPath);
       const key = `latex/${Date.now()}-latex.pdf`;
       const url = await uploadToS3(buffer, key);
+
+      await saveJob(req.user.username, "uploaded.pdf", "merge", "success");
 
       res.json({ message: "LaTeX PDF uploaded to S3", url });
 
@@ -559,6 +600,8 @@ app.post("/watermark-heavy", requireAuth, upload.array("files", 5), async (req, 
 
     const key = `watermark-heavy/${Date.now()}-heavy.pdf`;
     const url = await uploadToS3(processed[0], key);
+
+    await saveJob(req.user.username, "uploaded.pdf", "merge", "success");
 
     res.json({ message: "Heavy watermark PDF uploaded to S3", url });
   } catch (err) {
