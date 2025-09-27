@@ -13,6 +13,7 @@ const axios = require("axios");
 
 // AWS
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const { DynamoDBDocumentClient, PutCommand, QueryCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
 const { SSMClient, GetParameterCommand } = require("@aws-sdk/client-ssm");
@@ -21,19 +22,27 @@ const { CognitoIdentityProviderClient, SignUpCommand, ConfirmSignUpCommand, Init
 const { RespondToAuthChallengeCommand } = require("@aws-sdk/client-cognito-identity-provider");
 const secretsClient = new SecretsManagerClient({ region: "ap-southeast-2" });
 const secretName = "n11621516-a2secret";
+const memjs = require("memjs");
+const cache = memjs.Client.create(
+  process.env.CACHE_ENDPOINT || "pdfconverter.km2jzi.cfg.apse2.cache.amazonaws.com:11211"
+);
 
 
 // AWS Clients 
-const s3 = new S3Client({ region: "ap-southeast-2" });
+const s3 = new S3Client({
+  region: "ap-southeast-2",
+  forcePathStyle: false,  // use virtual-hosted style
+  endpoint: "https://s3.ap-southeast-2.amazonaws.com"
+});
 const BUCKET = process.env.S3_BUCKET || "my-pdf-storage-sydney";
+
 
 const { CognitoJwtVerifier } = require("aws-jwt-verify");
 const verifier = CognitoJwtVerifier.create({
   userPoolId: process.env.COGNITO_USER_POOL_ID,
-  tokenUse: process.env.COGNITO_CLIENT_ID,
+  tokenUse: "id",  // or "access" if you prefer
   clientId: process.env.COGNITO_CLIENT_ID,
 });
-
 
 const cognito = new CognitoIdentityProviderClient({ region: "ap-southeast-2" });
 
@@ -79,17 +88,27 @@ const upload = multer({
 // Auth middleware
 async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ error: "No token provided" });
+  if (!authHeader) {
+    return res.status(401).json({ error: "No token provided" });
+  }
 
   const token = authHeader.split(" ")[1];
   try {
     const payload = await verifier.verify(token);
-    req.user = payload; // contains username, sub, etc.
+
+    // normalize the username field
+    req.user = {
+      ...payload,
+      username: payload["cognito:username"] || payload.username || payload.sub
+    };
+
     next();
-  } catch (err) { 
+  } catch (err) {
+    console.error("JWT verify failed:", err);
     return res.status(403).json({ error: "Invalid or expired token" });
   }
 }
+
 
 // Role checker
 function requireRole(role) {
@@ -255,17 +274,69 @@ app.post("/auth/set-mfa", async (req, res) => {
   }
 });
 
+// google authentication
+app.post("/auth/google", async (req, res) => {
+  const { idToken } = req.body;
+
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(idToken.split(".")[1], "base64").toString("utf8")
+    );
+    const googleSub = decoded.sub; // unique ID for the Google user
+
+    const cmd = new InitiateAuthCommand({
+      AuthFlow: "USER_SRP_AUTH",   // or USER_PASSWORD_AUTH if using secrets
+      ClientId: process.env.COGNITO_CLIENT_ID,
+      AuthParameters: {
+        PROVIDER: "Google",
+        TOKEN: idToken,
+        SECRET_HASH: hashSecret(googleSub),
+      },
+    });
+
+    const out = await cognito.send(cmd);
+    res.json({
+      idToken: out.AuthenticationResult.IdToken,
+      accessToken: out.AuthenticationResult.AccessToken,
+    });
+  } catch (err) {
+    res.status(401).json({ error: "Google login failed: " + err.message });
+  }
+});
+
+
 // -------------------- CORE ROUTES ------------------------
 
 // Health check 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
+// elasticache - memcache 
+async function getOrCache(key, fetchFn) {
+  const cached = await cache.get(key);
+  if (cached.value) {
+    console.log("Cache hit:", key);
+    return JSON.parse(cached.value.toString());
+  }
+
+  console.log("Cache miss:", key);
+  const fresh = await fetchFn();
+  await cache.set(key, JSON.stringify(fresh), { expires: 60 });
+  return fresh;
+}
+
 // History logging
 async function addHistory(username, action, details) {
+  console.log("Adding history for user:", username); // 👈 debug
   await ddb.send(
     new PutCommand({
       TableName: HISTORY_TABLE,
-      Item: { username, timestamp: Date.now(), action, details, created_at: new Date().toISOString() },
+      Item: {
+        username,
+        timestamp: Date.now(),
+        action,
+        details,
+        created_at: new Date().toISOString(),
+      },
     })
   );
 }
@@ -273,32 +344,77 @@ async function addHistory(username, action, details) {
 // Get history
 app.get("/history", requireAuth, async (req, res) => {
   try {
-    let items = [];
-    if (req.user["cognito:groups"]?.includes("admin")) {
-      const data = await ddb.send(new ScanCommand({ TableName: HISTORY_TABLE }));
-      items = data.Items || [];
-    } else {
-      const data = await ddb.send(
-        new QueryCommand({
-          TableName: HISTORY_TABLE,
-          KeyConditionExpression: "username = :u",
-          ExpressionAttributeValues: { ":u": req.user.username },
-        })
-      );
-      items = data.Items || [];
-    }
-    items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    res.json({ results: items });
+    const data = await getOrCache(`history:${req.user.username}`, async () => {
+      if (req.user["cognito:groups"]?.includes("admin")) {
+        const result = await ddb.send(new ScanCommand({ TableName: HISTORY_TABLE }));
+        return result.Items || [];
+      } else {
+        const result = await ddb.send(
+          new QueryCommand({
+            TableName: HISTORY_TABLE,
+            KeyConditionExpression: "username = :u",
+            ExpressionAttributeValues: { ":u": req.user.username },
+          })
+        );
+        return result.Items || [];
+      }
+    });
+
+    res.json({ results: data });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch history" });
   }
 });
 
 // S3 upload helper
+const { GetObjectCommand } = require("@aws-sdk/client-s3");
+
 async function uploadToS3(buffer, key, contentType = "application/pdf") {
-  await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buffer, ContentType: contentType }));
-  return `https://${BUCKET}.s3.ap-southeast-2.amazonaws.com/${key}`;
+  await s3.send(new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+  }));
+
+  // generate a signed URL instead of hardcoding
+  return await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: 3600 });
 }
+
+// s3 pre-signed upload URL
+app.get("/s3/upload-url", requireAuth, async (req, res) => {
+  try {
+    const key = `uploads/${Date.now()}-${req.query.filename}`;
+    const command = new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      ContentType: req.query.contentType || "application/octet-stream",
+    });
+
+    const url = await getSignedUrl(s3, command, { expiresIn: 300 }); // 5 minutes
+
+    res.json({ uploadUrl: url, key });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to generate pre-signed URL" });
+  }
+});
+
+// s3 pre-signed download URL
+app.get("/s3/download-url", requireAuth, async (req, res) => {
+  try {
+    const key = req.query.key; // e.g. "uploads/12345-file.pdf"
+    const command = new GetObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+    });
+
+    const url = await getSignedUrl(s3, command, { expiresIn: 300 }); // 5 minutes
+
+    res.json({ downloadUrl: url });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to generate pre-signed URL" });
+  }
+});
 
 //  ------------------------ PDF ROUTES -----------------
 
@@ -499,12 +615,19 @@ async function loadParameters() {
   }
 }
 
+// ----------- server ----------------
+
+// static files 
 app.use(express.static(path.join(__dirname, "public")));
 
+// start server
 const PORT = process.env.PORT || 3000;
 async function init() {
-  await loadSecrets();
-  await loadParameters();
-  app.listen(PORT, () => console.log(`PDF converter running on port ${PORT}`));
+  await loadSecrets();     // Secrets Manager 
+  await loadParameters();  // Parameter Store 
+  app.listen(PORT, () =>
+    console.log(`PDF converter running on port ${PORT}`)
+  );
 }
+
 init();
