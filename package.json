@@ -12,6 +12,7 @@
     "@aws-sdk/client-secrets-manager": "^3.896.0",
     "@aws-sdk/client-ssm": "^3.896.0",
     "@aws-sdk/lib-dynamodb": "^3.896.0",
+    "@aws-sdk/s3-request-presigner": "^3.896.0",
     "aws-jwt-verify": "^5.1.0",
     "axios": "^1.11.0",
     "better-sqlite3": "^12.2.0",
