@@ -15,92 +15,94 @@ Overview
 
 - **Name:** Dania Adil
 - **Student number:** n11505524
-- **Partner name (if applicable):** YourPartner NameHere
-- **Application name:** FooBarBaz
-- **Two line description:** I/We implemented this very cool app that does Foo, Bar and Baz.
-- **EC2 instance name or ID:**
+- **Partner name (if applicable):** Parastoo Yousefi Darestani
+- **Application name:** PDF Converter
+- **Two line description:** We implemented a cloud-based PDF converter app that allows users to upload images, merge PDFs, and apply watermarks. It integrates multiple AWS services for persistence, caching, identity, and stateless operation.
+- **EC2 instance name or ID:** i-08e9573e4c15f4f80
 
 ------------------------------------------------
 
 ### Core - First data persistence service
 
-- **AWS service name:**  [eg. S3]
-- **What data is being stored?:** [eg video files]
-- **Why is this service suited to this data?:** [eg. large files are best suited to blob storage due to size restrictions on other services]
-- **Why is are the other services used not suitable for this data?:**
-- **Bucket/instance/table name:**
-- **Video timestamp:**
+- **AWS service name:** Amazon S3
+- **What data is being stored?:** Uploaded images and converted PDF files
+- **Why is this service suited to this data?:** S3 provides highly durable object storage that is ideal for storing large binary files such as PDFs and images.
+- **Why is are the other services used not suitable for this data?:** DynamoDB and RDS are optimised for structured data, not large unstructured files. 
+- **Bucket/instance/table name:** my-pdf-storage-sydney
+- **Video timestamp:** 0:00
 - **Relevant files:**
-    -
+    - server.js 
+    - routes/history.js 
 
 ### Core - Second data persistence service
 
-- **AWS service name:**  [eg. DynamoDB]
-- **What data is being stored?:** 
-- **Why is this service suited to this data?:**
-- **Why is are the other services used not suitable for this data?:**
-- **Bucket/instance/table name:**
-- **Video timestamp:**
-- **Relevant files:**
-    -
+- **AWS service name:** DynamoDB
+- **What data is being stored?:** Job history (user ID, file name, timestamps and the operation performed)
+- **Why is this service suited to this data?:** DynamoDB provides scalable, low-latency key-value storage for rapidly recording job events.
+- **Why is are the other services used not suitable for this data?:** S3 is inefficient for querying metadat, RDS requires more complex setup and isn't cost-effective for simple lookups. 
+- **Bucket/instance/table name:** pdf-history
+- **Video timestamp:** 0:27
+- **Relevant files:** 
+    - server.js
+    - routes/history.js
 
 ### Third data service
 
-- **AWS service name:**  [eg. RDS]
-- **What data is being stored?:** [eg video metadata]
-- **Why is this service suited to this data?:** [eg. ]
-- **Why is are the other services used not suitable for this data?:** [eg. Advanced video search requires complex querries which are not available on S3 and inefficient on DynamoDB]
-- **Bucket/instance/table name:**
-- **Video timestamp:**
+- **AWS service name:**  RDS (PostgreSQL)
+- **What data is being stored?:** Job details and analytics (user ID, filename, action type, status, created_at).
+- **Why is this service suited to this data?:** RDS supports relational queries and aggregation, which is required for reporting (e.g. count jobs per user, filler by action).
+- **Why is are the other services used not suitable for this data?:** DynamoDB lacks relational joins and filtering, while S3 is unstructured and unsuitable for SQL queries. 
+- **Bucket/instance/table name:** A2-Group58 (instance name)
+- **Video timestamp:** 0:45
 - **Relevant files:**
-    -
+    - server.js 
 
 ### S3 Pre-signed URLs
 
-- **S3 Bucket names:**
-- **Video timestamp:**
+- **S3 Bucket names:** my-pdf-storage-sydney 
+- **Video timestamp:** 1:35
 - **Relevant files:**
-    -
+    - server.js 
 
 ### In-memory cache
 
-- **ElastiCache instance name:**
-- **What data is being cached?:** [eg. Thumbnails from YouTube videos obatined from external API]
-- **Why is this data likely to be accessed frequently?:** [ eg. Thumbnails from popular YouTube videos are likely to be shown to multiple users ]
-- **Video timestamp:**
+- **ElastiCache instance name:** pdfconverter
+- **What data is being cached?:** Recently accessed job histories.
+- **Why is this data likely to be accessed frequently?:** Users often check their job history multiple times, caching avoids repeated DynamoDB scans.
+- **Video timestamp:** 1:57
 - **Relevant files:**
-    -
+    - server.js 
 
 ### Core - Statelessness
 
-- **What data is stored within your application that is not stored in cloud data services?:** [eg. intermediate video files that have been transcoded but not stabilised]
-- **Why is this data not considered persistent state?:** [eg. intermediate files can be recreated from source if they are lost]
-- **How does your application ensure data consistency if the app suddenly stops?:** [eg. journal used to record data transactions before they are done.  A separate task scans the journal and corrects problems on startup and once every 5 minutes afterwards. ]
+- **What data is stored within your application that is not stored in cloud data services?:** Temporary working files during PDF conversion/LaTeX compilation.
+- **Why is this data not considered persistent state?:** They can be regenerated from the original source files in S3.
+- **How does your application ensure data consistency if the app suddenly stops?:** Job events are logged in DynamoDB and RDS before task completion, allowing jobs to be retried without data loss. 
 - **Relevant files:**
-    -
+    - server.js 
 
 ### Graceful handling of persistent connections
 
-- **Type of persistent connection and use:** [eg. server-side-events for progress reporting]
-- **Method for handling lost connections:** [eg. client responds to lost connection by reconnecting and indicating loss of connection to user until connection is re-established ]
+- **Type of persistent connection and use:** REST API with client retries.
+- **Method for handling lost connections:** Clients retry failed requests; cached DynamoDB results ensure consistent responses. 
 - **Relevant files:**
-    -
+    - server.js 
 
 
 ### Core - Authentication with Cognito
 
-- **User pool name:**
-- **How are authentication tokens handled by the client?:** [eg. Response to login request sets a cookie containing the token.]
-- **Video timestamp:**
+- **User pool name:** a2-group58
+- **How are authentication tokens handled by the client?:** Tokens (idToken, accessToken) are returned from /auth/login and used in the Authorization header for API calls.
+- **Video timestamp:** 2:30
 - **Relevant files:**
-    -
+    - server.js 
 
 ### Cognito multi-factor authentication
 
-- **What factors are used for authentication:** [eg. password, SMS code]
-- **Video timestamp:**
+- **What factors are used for authentication:** Password and TOTP (google authenticator)
+- **Video timestamp:** 3:17
 - **Relevant files:**
-    -
+    - server.js
 
 ### Cognito federated identities
 
@@ -111,29 +113,29 @@ Overview
 
 ### Cognito groups
 
-- **How are groups used to set permissions?:** [eg. 'admin' users can delete and ban other users]
-- **Video timestamp:**
+- **How are groups used to set permissions?:** Admins can list all S3 files while regular users can only see their own history. 
+- **Video timestamp:** 4:17
 - **Relevant files:**
-    -
+    - server.js 
 
 ### Core - DNS with Route53
 
-- **Subdomain**:  [eg. myawesomeapp.cab432.com]
-- **Video timestamp:**
+- **Subdomain**: pdfconverter58.cab432.com
+- **Video timestamp:** 4:55
 
 ### Parameter store
 
-- **Parameter names:** [eg. n1234567/base_url]
-- **Video timestamp:**
+- **Parameter names:** /n11621516/pdf_parameter
+- **Video timestamp:** 5:48
 - **Relevant files:**
-    -
+    - server.js 
 
 ### Secrets manager
 
-- **Secrets names:** [eg. n1234567-youtube-api-key]
-- **Video timestamp:**
+- **Secrets names:** n11621516-a2secret
+- **Video timestamp:** 7:00
 - **Relevant files:**
-    -
+    - server.js 
 
 ### Infrastructure as code
 
