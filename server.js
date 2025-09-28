@@ -370,7 +370,7 @@ async function saveJob(userId, filename, action, status) {
 app.get("/history", requireAuth, async (req, res) => {
   try {
     const data = await getOrCache(`history:${req.user.username}`, async () => {
-      if (req.user["cognito:groups"]?.includes("admin")) {
+      if (req.user["cognito:groups"]?.includes("Admins")) {
         const result = await ddb.send(new ScanCommand({ TableName: HISTORY_TABLE }));
         return result.Items || [];
       } else {
