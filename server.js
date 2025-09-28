@@ -42,7 +42,9 @@ const s3 = new S3Client({
   forcePathStyle: false,  // use virtual-hosted style
   endpoint: "https://s3.ap-southeast-2.amazonaws.com"
 });
-const BUCKET = process.env.S3_BUCKET || "my-pdf-storage-sydney";
+
+const BUCKET = process.env.S3_BUCKET;
+const HISTORY_TABLE = process.env.HISTORY_TABLE;
 
 
 const { CognitoJwtVerifier } = require("aws-jwt-verify");
@@ -67,7 +69,6 @@ const ssm = new SSMClient({ region: "ap-southeast-2" });
 const ddb = DynamoDBDocumentClient.from(
   new DynamoDBClient({ region: "ap-southeast-2" })
 );
-const HISTORY_TABLE = process.env.HISTORY_TABLE || "pdf-history";
 
 // Express setup 
 const app = express();
@@ -104,7 +105,6 @@ async function requireAuth(req, res, next) {
   try {
     const payload = await verifier.verify(token);
 
-    // normalize the username field
     req.user = {
       ...payload,
       username: payload["cognito:username"] || payload.username || payload.sub
@@ -138,7 +138,7 @@ app.post("/auth/signup", async (req, res) => {
       Password: password,
       UserAttributes: [
         { Name: "email", Value: email },
-        { Name: "name", Value: fullName || username }  // required full name
+        { Name: "name", Value: fullName || username }
       ],
       SecretHash: hashSecret(username),
     });
@@ -200,7 +200,7 @@ app.post("/auth/login", async (req, res) => {
 
 // Setup OTP
 app.post("/auth/setup-totp", async (req, res) => {
-  const { accessToken, username } = req.body; // need username for display
+  const { accessToken, username } = req.body;
   try {
     const cmd = new AssociateSoftwareTokenCommand({ AccessToken: accessToken });
     const out = await cognito.send(cmd);
@@ -217,7 +217,7 @@ app.post("/auth/setup-totp", async (req, res) => {
     res.json({
       secret,
       uri,
-      qrCode: qrCodeDataURL // can be displayed in browser or decoded by Hoppscotch
+      qrCode: qrCodeDataURL 
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -226,14 +226,14 @@ app.post("/auth/setup-totp", async (req, res) => {
 
 // Verify OTP
 app.post("/auth/verify-totp", async (req, res) => {
-  const { accessToken, code } = req.body; // code = 6-digit from authenticator app
+  const { accessToken, code } = req.body;
   try {
     const cmd = new VerifySoftwareTokenCommand({
       AccessToken: accessToken,
       UserCode: code,
     });
     const out = await cognito.send(cmd);
-    res.json({ status: out.Status }); // "SUCCESS" if correct
+    res.json({ status: out.Status });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -290,10 +290,10 @@ app.post("/auth/google", async (req, res) => {
     const decoded = JSON.parse(
       Buffer.from(idToken.split(".")[1], "base64").toString("utf8")
     );
-    const googleSub = decoded.sub; // unique ID for the Google user
+    const googleSub = decoded.sub;
 
     const cmd = new InitiateAuthCommand({
-      AuthFlow: "USER_SRP_AUTH",   // or USER_PASSWORD_AUTH if using secrets
+      AuthFlow: "USER_SRP_AUTH",
       ClientId: process.env.COGNITO_CLIENT_ID,
       AuthParameters: {
         PROVIDER: "Google",
@@ -353,7 +353,7 @@ async function addHistory(username, action, details) {
 }
 
 
-// ⬇️ NEW: History logging for RDS
+// History logging for RDS
 async function saveJob(userId, filename, action, status) {
   try {
     await pgPool.query(
@@ -411,7 +411,7 @@ app.get("/admin/files", requireAuth, requireRole("Admins"), async (req, res) => 
 });
 
 
-// ⬇️ NEW: RDS summary endpoint (aggregate query)
+// RDS summary endpoint (aggregate query)
 app.get("/history/rds/:user", requireAuth, requireRole("Admins"), async (req, res) => {
   try {
     const result = await pgPool.query(`
@@ -428,7 +428,7 @@ app.get("/history/rds/:user", requireAuth, requireRole("Admins"), async (req, re
   }
 });
 
-// ⬇️ RDS filter-by-action endpoint (normalised + debug logging)
+// RDS filter-by-action endpoint
 app.get("/history/rds/filter", requireAuth, async (req, res) => {
   let { action } = req.query;
   if (!action) {
@@ -455,7 +455,7 @@ app.get("/history/rds/filter", requireAuth, async (req, res) => {
   }
 });
 
-// ⬇️ NEW: RDS history endpoint
+// RDS history endpoint
 app.get("/history/rds/:user", requireAuth, async (req, res) => {
   try {
     const result = await pgPool.query(

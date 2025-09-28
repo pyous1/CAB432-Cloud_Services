@@ -13,8 +13,8 @@ Instructions
 Overview
 ------------------------------------------------
 
-- **Name:** YourName GoesHere
-- **Student number:** n100200300
+- **Name:** Dania Adil
+- **Student number:** n11505524
 - **Partner name (if applicable):** YourPartner NameHere
 - **Application name:** FooBarBaz
 - **Two line description:** I/We implemented this very cool app that does Foo, Bar and Baz.
