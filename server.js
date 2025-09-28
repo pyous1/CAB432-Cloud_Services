@@ -10,7 +10,6 @@ const path = require("path");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 const axios = require("axios");
 
-
 // AWS
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
@@ -722,11 +721,25 @@ async function loadSecrets() {
 // Parameter Store
 async function loadParameters() {
   try {
-    const param = await ssm.send(new GetParameterCommand({ Name: "/n11621516/pdf_parameter" }));
-    process.env.APP_URL = param.Parameter.Value;
-    console.log("Parameter loaded from SSM ✅", process.env.APP_URL);
+    const paramsToLoad = [
+      "/n11621516/pdf_parameter",
+      "/n11621516/COGNITO_USER_POOL_ID",
+      "/n11621516/COGNITO_CLIENT_ID",
+      "/n11621516/HISTORY_TABLE",
+      "/n11621516/S3_BUCKET"
+    ];
+
+    for (const name of paramsToLoad) {
+      const resp = await ssm.send(
+        new GetParameterCommand({ Name: name })
+      );
+      // save into env using last part of name
+      const key = name.split("/").pop();
+      process.env[key] = resp.Parameter.Value;
+      console.log(`Parameter loaded from SSM ✅ ${key}=${process.env[key]}`);
+    }
   } catch (err) {
-    console.error("Failed to load parameter:", err);
+    console.error("Failed to load parameters:", err);
   }
 }
 
