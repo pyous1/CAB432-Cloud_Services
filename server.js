@@ -391,8 +391,29 @@ app.get("/history", requireAuth, async (req, res) => {
   }
 });
 
+const { ListObjectsV2Command } = require("@aws-sdk/client-s3");
+
+// Admin-only: list all S3 files
+app.get("/admin/files", requireAuth, requireRole("Admins"), async (req, res) => {
+  try {
+    const data = await s3.send(
+      new ListObjectsV2Command({ Bucket: BUCKET, MaxKeys: 20 })
+    );
+    const files = (data.Contents || []).map(obj => ({
+      key: obj.Key,
+      size: obj.Size,
+      lastModified: obj.LastModified
+    }));
+    res.json({ files });
+  } catch (err) {
+    console.error("❌ Failed to list S3 files:", err);
+    res.status(500).json({ error: "Failed to list S3 files" });
+  }
+});
+
+
 // ⬇️ NEW: RDS summary endpoint (aggregate query)
-app.get("/history/rds/summary", requireAuth, async (req, res) => {
+app.get("/history/rds/:user", requireAuth, requireRole("Admins"), async (req, res) => {
   try {
     const result = await pgPool.query(`
       SELECT user_id, COUNT(*) AS total_jobs
