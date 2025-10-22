@@ -1,20 +1,18 @@
-FROM node:18-bullseye
+# Base image
+FROM node:18
 
+# Create app directory
 WORKDIR /app
 
-# Install minimal LaTeX
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive \
-    apt-get install -y \
-        texlive-base \
-        texlive-latex-base \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy dependency files
+# Copy package files and install dependencies
 COPY package*.json ./
+RUN npm install
 
-RUN npm install --only=production
-
+# Copy the rest of the app
 COPY . .
 
+# Expose port 3000 (or change if your app uses another port)
 EXPOSE 3000
+
+# Start the app
 CMD ["node", "server.js"]

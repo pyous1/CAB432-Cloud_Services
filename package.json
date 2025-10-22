@@ -1,4 +1,5 @@
 {
+  "module": "module",
   "name": "pdf-converter",
   "version": "1.0.0",
   "main": "server.js",
