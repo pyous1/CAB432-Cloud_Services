@@ -78,6 +78,7 @@
   </div>
 
 <script>
+const API_BASE = "https://pdfworker.cab432.com"; // 👈 your backend API domain
 let token = null;
 
 function authHeaders() {
@@ -86,7 +87,7 @@ function authHeaders() {
 
 async function callEndpoint(path, resultId) {
   try {
-    const res = await fetch(path, { headers: authHeaders() });
+    const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() });
     let data;
     try { data = await res.json(); } catch { data = await res.text(); }
     document.getElementById(resultId).textContent =
@@ -100,7 +101,7 @@ async function callEndpoint(path, resultId) {
 // Login form
 document.getElementById("loginForm").addEventListener("submit", async e => {
   e.preventDefault();
-  const res = await fetch("/login", {
+  const res = await fetch(`${API_BASE}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -123,8 +124,8 @@ async function uploadFiles(path, inputId, resultId) {
   const files = document.getElementById(inputId).files;
   const formData = new FormData();
   for (let f of files) formData.append("files", f);
-  const res = await fetch(path, { method: "POST", headers: authHeaders(), body: formData });
-  if (res.headers.get("Content-Type").includes("application/pdf")) {
+  const res = await fetch(`${API_BASE}${path}`, { method: "POST", headers: authHeaders(), body: formData });
+  if (res.headers.get("Content-Type")?.includes("application/pdf")) {
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -133,7 +134,7 @@ async function uploadFiles(path, inputId, resultId) {
     a.click();
     document.getElementById(resultId).textContent = "✅ PDF downloaded.";
   } else {
-    const err = await res.json();
+    const err = await res.json().catch(() => ({ error: "Unexpected error" }));
     document.getElementById(resultId).textContent = "❌ " + JSON.stringify(err);
   }
 }
@@ -145,7 +146,7 @@ document.getElementById("latexForm").onsubmit = e => { e.preventDefault(); uploa
 document.getElementById("watermarkForm").onsubmit = e => { e.preventDefault(); uploadFiles("/watermark", "watermarkInput", "watermarkResult"); }
 
 function downloadFile(path) {
-  fetch(path, { headers: authHeaders() })
+  fetch(`${API_BASE}${path}`, { headers: authHeaders() })
     .then(res => res.blob())
     .then(blob => {
       const url = URL.createObjectURL(blob);

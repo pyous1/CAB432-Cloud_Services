@@ -403,6 +403,65 @@ app.post("/external/fetchpdf", requireAuth, async (req, res) => {
   }
 });
 
+// ---------------- CUSTOM CLOUDWATCH METRIC ----------------
+const { CloudWatchClient, PutMetricDataCommand } = require("@aws-sdk/client-cloudwatch");
+
+const cloudwatch = new CloudWatchClient({ region: "ap-southeast-2" });
+
+async function publishCustomMetric(metricName, value) {
+  try {
+    await cloudwatch.send(new PutMetricDataCommand({
+      Namespace: "PDFConverterApp",
+      MetricData: [
+        {
+          MetricName: metricName,
+          Unit: "Count",
+          Value: value,
+          Dimensions: [
+            { Name: "Service", Value: "PDFWorker" },
+            { Name: "Environment", Value: "Prod" }
+          ]
+        }
+      ]
+    }));
+    console.log(`📈 Published metric: ${metricName}=${value}`);
+  } catch (err) {
+    console.error("❌ Failed to publish CloudWatch metric:", err);
+  }
+}
+
+// -------------------- SERVERLESS NOTIFICATION ENDPOINT ------------------------
+app.post("/api/notify", async (req, res) => {
+  const { bucket, key } = req.body;
+
+  if (!bucket || !key) {
+    return res.status(400).json({ error: "Missing bucket or key in request" });
+  }
+
+  console.log(`📩 Lambda notification received for file: ${key} in bucket: ${bucket}`);
+
+  try {
+    // Log to DynamoDB
+    await addHistory("lambda-system", "lambda-notify", { bucket, key });
+
+    // Optionally record CloudWatch metric (for autoscaling evidence)
+    await publishCustomMetric("PendingNotifications", 1);
+
+    // Queue the job for processing
+    await sqs.send(new SendMessageCommand({
+      QueueUrl: QUEUE_URL,
+      MessageBody: JSON.stringify({ bucket, key, timestamp: Date.now() })
+    }));
+
+    console.log(`📨 Job queued for ${key}`);
+    return res.json({ message: "Job queued successfully", bucket, key });
+
+  } catch (err) {
+    console.error("❌ Error handling notification:", err);
+    return res.status(500).json({ error: "Failed to queue job", details: err.message });
+  }
+});
+
 // ----------- static & start ----------------
 app.use(express.static(path.join(__dirname, "public")));
 
