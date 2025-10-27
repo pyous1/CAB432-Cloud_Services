@@ -701,6 +701,23 @@ app.get("/external/fetchpdf", requireAuth, async (req, res) => {
   }
 });
 
+// -------------------- SERVERLESS NOTIFICATION ENDPOINT ------------------------
+
+app.post("/api/notify", async (req, res) => {
+  const { bucket, key } = req.body;
+
+  if (!bucket || !key) {
+    return res.status(400).json({ error: "Missing bucket or key in request" });
+  }
+
+  console.log(`📩 Lambda notification received for file: ${key} in bucket: ${bucket}`);
+
+  // Log this event to DynamoDB
+  await addHistory("lambda-system", "lambda-notify", { bucket, key });
+
+  res.json({ message: "Notification received", bucket, key });
+});
+
 //------------- BOOTSRAP ----------------
 
 // Secrets Manager
