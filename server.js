@@ -11,6 +11,9 @@ const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 const axios = require("axios");
 
 // AWS
+const { SQSClient, SendMessageCommand } = require("@aws-sdk/client-sqs");
+const sqs = new SQSClient({ region: "ap-southeast-2" });
+const QUEUE_URL = "https://sqs.ap-southeast-2.amazonaws.com/901444280953/n11621516-pdf-jobs";
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
@@ -743,13 +746,28 @@ app.post("/api/notify", async (req, res) => {
 
   console.log(`📩 Lambda notification received for file: ${key} in bucket: ${bucket}`);
 
-  // Log to DynamoDB
-  await addHistory("lambda-system", "lambda-notify", { bucket, key });
+  try {
+    // Log to DynamoDB
+    await addHistory("lambda-system", "lambda-notify", { bucket, key });
 
-  // Publish custom metric for autoscaling
-  await publishCustomMetric("PendingNotifications", 1);
+    // Optionally record CloudWatch metric (you can keep this for your criterion evidence)
+    await publishCustomMetric("PendingNotifications", 1);
 
-  res.json({ message: "Notification received", bucket, key });
+    // Queue the job for processing
+    await sqs.send(new SendMessageCommand({
+      QueueUrl: QUEUE_URL,
+      MessageBody: JSON.stringify({ bucket, key, timestamp: Date.now() })
+    }));
+
+    console.log(`📨 Job queued for ${key}`);
+
+    // ✅ send response once
+    return res.json({ message: "Job queued successfully", bucket, key });
+
+  } catch (err) {
+    console.error("❌ Error handling notification:", err);
+    return res.status(500).json({ error: "Failed to queue job", details: err.message });
+  }
 });
 
 
