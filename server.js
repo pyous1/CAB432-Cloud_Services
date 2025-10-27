@@ -701,23 +701,6 @@ app.get("/external/fetchpdf", requireAuth, async (req, res) => {
   }
 });
 
-// -------------------- SERVERLESS NOTIFICATION ENDPOINT ------------------------
-
-app.post("/api/notify", async (req, res) => {
-  const { bucket, key } = req.body;
-
-  if (!bucket || !key) {
-    return res.status(400).json({ error: "Missing bucket or key in request" });
-  }
-
-  console.log(`📩 Lambda notification received for file: ${key} in bucket: ${bucket}`);
-
-  // Log this event to DynamoDB
-  await addHistory("lambda-system", "lambda-notify", { bucket, key });
-
-  res.json({ message: "Notification received", bucket, key });
-});
-
 // ---------------- CUSTOM CLOUDWATCH METRIC ----------------
 const { CloudWatchClient, PutMetricDataCommand } = require("@aws-sdk/client-cloudwatch");
 const cloudwatch = new CloudWatchClient({ region: "ap-southeast-2" });
@@ -744,20 +727,25 @@ async function publishCustomMetric(metricName, value) {
   }
 }
 
-// Call the metric whenever work is queued
+// -------------------- SERVERLESS NOTIFICATION ENDPOINT ------------------------
 app.post("/api/notify", async (req, res) => {
   const { bucket, key } = req.body;
-  if (!bucket || !key) return res.status(400).json({ error: "Missing bucket or key" });
+
+  if (!bucket || !key) {
+    return res.status(400).json({ error: "Missing bucket or key in request" });
+  }
 
   console.log(`📩 Lambda notification received for file: ${key} in bucket: ${bucket}`);
 
+  // Log to DynamoDB
   await addHistory("lambda-system", "lambda-notify", { bucket, key });
 
-  // Increment custom metric for autoscaling visibility
+  // Publish custom metric for autoscaling
   await publishCustomMetric("PendingNotifications", 1);
 
   res.json({ message: "Notification received", bucket, key });
 });
+
 
 //------------- BOOTSRAP ----------------
 
