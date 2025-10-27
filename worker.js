@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 const QUEUE_URL = "https://sqs.ap-southeast-2.amazonaws.com/901444280953/n11621516-pdf-jobs";
 
 const sqs = new SQSClient({ region: "ap-southeast-2" });
