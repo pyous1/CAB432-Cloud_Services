@@ -718,6 +718,47 @@ app.post("/api/notify", async (req, res) => {
   res.json({ message: "Notification received", bucket, key });
 });
 
+// ---------------- CUSTOM CLOUDWATCH METRIC ----------------
+const { CloudWatchClient, PutMetricDataCommand } = require("@aws-sdk/client-cloudwatch");
+const cloudwatch = new CloudWatchClient({ region: "ap-southeast-2" });
+
+async function publishCustomMetric(metricName, value) {
+  try {
+    await cloudwatch.send(new PutMetricDataCommand({
+      Namespace: "PDFConverterApp",
+      MetricData: [
+        {
+          MetricName: metricName,
+          Unit: "Count",
+          Value: value,
+          Dimensions: [
+            { Name: "Service", Value: "PDFWorker" },
+            { Name: "Environment", Value: "Prod" }
+          ]
+        }
+      ]
+    }));
+    console.log(`📈 Published metric: ${metricName}=${value}`);
+  } catch (err) {
+    console.error("❌ Failed to publish CloudWatch metric:", err);
+  }
+}
+
+// Call the metric whenever work is queued
+app.post("/api/notify", async (req, res) => {
+  const { bucket, key } = req.body;
+  if (!bucket || !key) return res.status(400).json({ error: "Missing bucket or key" });
+
+  console.log(`📩 Lambda notification received for file: ${key} in bucket: ${bucket}`);
+
+  await addHistory("lambda-system", "lambda-notify", { bucket, key });
+
+  // Increment custom metric for autoscaling visibility
+  await publishCustomMetric("PendingNotifications", 1);
+
+  res.json({ message: "Notification received", bucket, key });
+});
+
 //------------- BOOTSRAP ----------------
 
 // Secrets Manager
