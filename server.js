@@ -708,7 +708,6 @@ app.get("/external/fetchpdf", requireAuth, async (req, res) => {
 const { CloudWatchClient, PutMetricDataCommand } = require("@aws-sdk/client-cloudwatch");
 const { fromInstanceMetadata } = require("@aws-sdk/credential-providers");
 
-// Force the SDK to get credentials directly from the instance metadata (IMDSv2)
 const cloudwatch = new CloudWatchClient({
   region: "ap-southeast-2",
   credentials: fromInstanceMetadata(),
