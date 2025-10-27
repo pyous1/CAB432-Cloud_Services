@@ -710,7 +710,6 @@ const { fromInstanceMetadata } = require("@aws-sdk/credential-providers");
 
 const cloudwatch = new CloudWatchClient({
   region: "ap-southeast-2",
-  credentials: fromInstanceMetadata(),
 });
 
 async function publishCustomMetric(metricName, value) {
