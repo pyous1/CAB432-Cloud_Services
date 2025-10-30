@@ -303,6 +303,7 @@ app.post("/convert/images", requireAuth, upload.array("files", 50), async (req, 
     };
 
     await sqs.send(new SendMessageCommand({ QueueUrl: QUEUE_URL, MessageBody: JSON.stringify(job) }));
+    await publishCustomMetric("PendingNotifications", 1);
     console.log("📨 Enqueued SQS job:", { jobId, type: job.type, count: req.files.length });
     await addHistory(req.user.username, "queued: images->pdf", { jobId, count: req.files.length });
 
@@ -327,6 +328,7 @@ app.post("/merge", requireAuth, upload.array("files", 50), async (req, res) => {
     };
 
     await sqs.send(new SendMessageCommand({ QueueUrl: QUEUE_URL, MessageBody: JSON.stringify(job) }));
+    await publishCustomMetric("PendingNotifications", 1);
     console.log("📨 Enqueued SQS job:", { jobId, type: job.type, count: req.files.length });
     await addHistory(req.user.username, "queued: merge", { jobId, count: req.files.length });
 
@@ -351,6 +353,7 @@ app.post("/convert/latex", requireAuth, upload.single("file"), async (req, res) 
     };
 
     await sqs.send(new SendMessageCommand({ QueueUrl: QUEUE_URL, MessageBody: JSON.stringify(job) }));
+    await publishCustomMetric("PendingNotifications", 1);
     console.log("📨 Enqueued SQS job:", { jobId, type: job.type, file: req.file.originalname });
     await addHistory(req.user.username, "queued: latex->pdf", { jobId, file: req.file.originalname });
 
@@ -375,6 +378,7 @@ app.post("/watermark-heavy", requireAuth, upload.array("files", 5), async (req, 
     };
 
     await sqs.send(new SendMessageCommand({ QueueUrl: QUEUE_URL, MessageBody: JSON.stringify(job) }));
+    await publishCustomMetric("PendingNotifications", 1);
     console.log("📨 Enqueued SQS job:", { jobId, type: job.type, count: req.files.length });
     await addHistory(req.user.username, "queued: watermark-heavy", { jobId, count: req.files.length });
 
@@ -393,6 +397,7 @@ app.post("/external/fetchpdf", requireAuth, async (req, res) => {
     const job = { jobId, type: "external-fetch", username: req.user.username, url: urlParam };
 
     await sqs.send(new SendMessageCommand({ QueueUrl: QUEUE_URL, MessageBody: JSON.stringify(job) }));
+    await publishCustomMetric("PendingNotifications", 1);
     console.log("📨 Enqueued SQS job:", { jobId, type: job.type, url: urlParam });
     await addHistory(req.user.username, "queued: external-fetch", { jobId, url: urlParam });
 
@@ -502,6 +507,6 @@ async function loadParameters() {
 async function init() {
   await loadSecrets();
   await loadParameters();
-  app.listen(PORT, () => console.log(`PDF converter API (producer) running on port ${PORT}`));
+  app.listen(PORT, () => console.log(`PDF Converter API running on port ${PORT}`));
 }
 init();

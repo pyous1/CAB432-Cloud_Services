@@ -12,6 +12,12 @@ const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 
+const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+const { DynamoDBDocumentClient, PutCommand } = require("@aws-sdk/lib-dynamodb");
+
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
+const HISTORY_TABLE = process.env.HISTORY_TABLE;
+
 const region = "ap-southeast-2";
 const sqs = new SQSClient({ region });
 const s3  = new S3Client({ region });
@@ -110,20 +116,80 @@ async function handleExternalFetch(job) {
   return key;
 }
 
-// ========== Dispatcher ==========
-async function processJob(job) {
-  console.log(`🔧 Processing ${job.type} for ${job.username} (jobId=${job.jobId || "n/a"})`);
-  switch (job.type) {
-    case "convert-images":  return handleConvertImages(job);
-    case "merge-pdfs":      return handleMergePDFs(job);
-    case "watermark-heavy": return handleWatermark(job);
-    case "latex->pdf":      return handleLatex(job);
-    case "external-fetch":  return handleExternalFetch(job);
-    default:
-      console.warn("Unknown job type:", job.type);
-      return null;
+async function addHistory(username, action, details) {
+  if (!HISTORY_TABLE) return;
+  try {
+    await ddb.send(new PutCommand({
+      TableName: HISTORY_TABLE,
+      Item: {
+        username,
+        timestamp: Date.now(),
+        action,
+        details,
+        created_at: new Date().toISOString(),
+      },
+    }));
+  } catch (e) {
+    console.error("⚠️ DDB history write failed:", e.message);
   }
 }
+
+// ========== Dispatcher ==========
+async function processJob(job) {
+  try {
+    // 🟢 1. Mark job as started (goes into DynamoDB history)
+    await addHistory(job.username, "worker: IN_PROGRESS", {
+      jobId: job.jobId,
+      type: job.type,
+    });
+
+    console.log(`🔧 Processing ${job.type} for ${job.username} (jobId=${job.jobId || "n/a"})`);
+
+    // 🧩 2. Run the correct handler based on job type
+    let resultKey = null;
+    switch (job.type) {
+      case "convert-images":
+        resultKey = await handleConvertImages(job);
+        break;
+      case "merge-pdfs":
+        resultKey = await handleMergePDFs(job);
+        break;
+      case "watermark-heavy":
+        resultKey = await handleWatermark(job);
+        break;
+      case "latex->pdf":
+        resultKey = await handleLatex(job);
+        break;
+      case "external-fetch":
+        resultKey = await handleExternalFetch(job);
+        break;
+      default:
+        console.warn("⚠️ Unknown job type:", job.type);
+        return;
+    }
+
+    // 🟢 3. Mark job as completed (after handler finishes)
+    if (resultKey) {
+      await addHistory(job.username, "worker: COMPLETED", {
+        jobId: job.jobId,
+        type: job.type,
+        resultKey,
+      });
+      console.log(`✅ Job completed (${job.type}) -> ${resultKey}`);
+    } else {
+      console.warn(`⚠️ No resultKey returned for ${job.jobId}`);
+    }
+  } catch (err) {
+    console.error(`❌ Error processing job ${job.jobId}:`, err);
+    // You can optionally add a "FAILED" history entry here
+    await addHistory(job.username, "worker: FAILED", {
+      jobId: job.jobId,
+      type: job.type,
+      error: err.message,
+    });
+  }
+}
+
 
 // ========== EventBridge notify ==========
 async function notifyJobComplete(job, resultKey) {
