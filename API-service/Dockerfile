@@ -1,25 +1,20 @@
-# ============================
-# PDF Converter API Dockerfile
-# ============================
+# Use a modern Node that ships pre-built native modules
+FROM node:20-alpine
 
-# Use official Node LTS
-FROM node:18
+# Add build tools just in case any package compiles native code
+RUN apk add --no-cache python3 make g++
 
-# Set working directory
 WORKDIR /app
 
-# Copy package files first (for caching)
+# Copy only the dependency manifests first
 COPY package*.json ./
 
-# Install only production dependencies
-RUN npm install --omit=dev
+# Clean install dependencies inside the container
+RUN npm ci --omit=dev
 
-# Copy the rest of the application
+# Then copy your actual source (but NOT node_modules)
 COPY . .
 
-# Expose port (ECS will map it automatically)
 EXPOSE 3000
-
-# Start the API service
 CMD ["node", "server.js"]
 

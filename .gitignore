@@ -1,6 +1,21 @@
-# Node.js ignore rules
+cat <<EOF > .gitignore
+# Node
 node_modules/
+npm-debug.log*
 .env
+*.log
+
+# OS / Editor
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# AWS / Docker
 *.pem
-*.key
-*.secret
+*.zip
+*.tar
+*.tar.gz
+*.iml
+.Dockerfile.swp
+EOF

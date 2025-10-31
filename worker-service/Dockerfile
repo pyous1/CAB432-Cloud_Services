@@ -1,18 +1,10 @@
-# Base image
-FROM node:18
+FROM node:20-alpine
 
-# Create app directory
 WORKDIR /app
 
-# Copy package files and install dependencies
 COPY package*.json ./
-RUN npm install
+RUN npm install --omit=dev
 
-# Copy the rest of the app
 COPY . .
 
-# Expose port 3000 (or change if your app uses another port)
-EXPOSE 3000
-
-# Start the app
-CMD ["node", "server.js"]
+CMD ["node", "worker.js"]

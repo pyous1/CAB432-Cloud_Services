@@ -1,3 +1,6 @@
+// ============================
+// HISTORY SERVICE (Public)
+// ============================
 require("dotenv").config();
 const express = require("express");
 const morgan = require("morgan");
@@ -21,13 +24,14 @@ const pg = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
+// ---------------- HEALTH CHECK ----------------
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // ========================================================
 // DYNAMODB HISTORY ENDPOINTS
 // ========================================================
 
-// DynamoDB history (single user)
+// Get history for a specific user (DynamoDB)
 app.get("/history/dynamo/:username", async (req, res) => {
   try {
     const data = await ddb.send(
@@ -39,11 +43,12 @@ app.get("/history/dynamo/:username", async (req, res) => {
     );
     res.json({ results: data.Items || [] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("❌ DynamoDB query failed:", err.message);
+    res.status(500).json({ error: "Failed to fetch DynamoDB history" });
   }
 });
 
-// DynamoDB all (admin/debug)
+// Get all history items (for debugging / admin)
 app.get("/history/dynamo", async (_req, res) => {
   try {
     const data = await ddb.send(
@@ -51,7 +56,8 @@ app.get("/history/dynamo", async (_req, res) => {
     );
     res.json({ results: data.Items || [] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("❌ DynamoDB scan failed:", err.message);
+    res.status(500).json({ error: "Failed to scan DynamoDB history" });
   }
 });
 
@@ -59,7 +65,7 @@ app.get("/history/dynamo", async (_req, res) => {
 // RDS HISTORY ENDPOINTS
 // ========================================================
 
-// RDS history by username
+// Get RDS history for a given username
 app.get("/history/rds/:username", async (req, res) => {
   try {
     const result = await pg.query(
@@ -68,11 +74,12 @@ app.get("/history/rds/:username", async (req, res) => {
     );
     res.json({ results: result.rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("❌ RDS user history failed:", err.message);
+    res.status(500).json({ error: "Failed to fetch RDS user history" });
   }
 });
 
-// RDS summary endpoint (aggregate by user)
+// Get RDS summary aggregated by user
 app.get("/history/rds/summary", async (_req, res) => {
   try {
     const result = await pg.query(`
@@ -83,19 +90,16 @@ app.get("/history/rds/summary", async (_req, res) => {
     `);
     res.json({ summary: result.rows });
   } catch (err) {
-    console.error("❌ Failed to fetch RDS summary:", err.message);
+    console.error("❌ RDS summary failed:", err.message);
     res.status(500).json({ error: "Failed to fetch RDS summary" });
   }
 });
 
-// RDS filter-by-action endpoint (?action=merge-pdfs)
+// Get RDS jobs filtered by action (?action=merge-pdfs)
 app.get("/history/rds/filter", async (req, res) => {
   let { action } = req.query;
-  if (!action) {
-    return res.status(400).json({ error: "Please provide ?action=..." });
-  }
+  if (!action) return res.status(400).json({ error: "Please provide ?action=..." });
 
-  console.log("🔎 Raw action param:", JSON.stringify(action));
   action = action.trim().replace(/^"+|"+$/g, "").toLowerCase();
 
   try {
@@ -103,17 +107,15 @@ app.get("/history/rds/filter", async (req, res) => {
       "SELECT * FROM jobs WHERE LOWER(action) = $1 ORDER BY created_at DESC",
       [action]
     );
-    console.log("✅ Query executed with param:", action);
-    console.log("✅ Rows returned:", result.rows.length);
     res.json({ results: result.rows });
   } catch (err) {
-    console.error("❌ Failed to fetch RDS filtered jobs:", err.message);
-    res.status(500).json({ error: "Failed to fetch RDS filtered jobs" });
+    console.error("❌ RDS filter failed:", err.message);
+    res.status(500).json({ error: "Failed to fetch filtered RDS jobs" });
   }
 });
 
 // ========================================================
+// START SERVER
+// ========================================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () =>
-  console.log(`History service running on ${PORT}`)
-);
+app.listen(PORT, () => console.log(`History service running on port ${PORT}`));
